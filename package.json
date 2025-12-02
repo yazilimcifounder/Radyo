@@ -1,0 +1,22 @@
+
+{
+  "name": "lythar-realtime-server",
+  "version": "1.0.0",
+  "description": "Lythar için gerçek zamanlı Socket.io ve Redis Pub/Sub sunucusu.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1",
+    "socket.io": "^4.7.5"
+  },
+  "keywords": [
+    "socketio",
+    "redis",
+    "realtime"
+  ],
+  "author": "Lythar Team",
+  "license": "ISC"
+}

@@ -1,87 +1,65 @@
 
-// Gerekli Modülleri Yükle
-const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const Redis = require('ioredis'); 
+const express = require('express');
 
-// 🚨 Render Ortam Ayarları
-// Render'da NODE_ENV production'a ayarlanır. PORT değişkenini kullanmalıyız.
 const PORT = process.env.PORT || 3000;
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'; // Varsayılan yerel URL
-
-// Express ve Socket.io Sunucusu Kurulumu
 const app = express();
 const server = http.createServer(app);
+
+// Express, gelen JSON verilerini otomatik olarak parse etmeli
+app.use(express.json()); 
+
+// Socket.io Kurulumu
 const io = socketIo(server, {
     cors: {
-        // 🔑 ÇOK KRİTİK: PHP Uygulamanın domainine izin ver
+        // 🔑 CORS: PHP uygulamanın domainine izin ver
         origin: [
-            "https://lythar-ana-uygulama.onrender.com", 
-            "http://localhost:8080" // Yerel test için
+            process.env.PHP_APP_URL || 'http://localhost:8080', 
+            'https://lythar-ana-uygulama.onrender.com' // Gerçek Render URL'i
         ], 
         methods: ["GET", "POST"]
     }
 });
 
-// Redis Bağlantıları Kurulumu
-// 1. pubClient: PHP'ye veya diğer servislere mesaj yayınlamak için (Bu örnekte kullanılmıyor ama iyi pratik)
-const pubClient = new Redis(REDIS_URL);
-// 2. subClient: PHP'den gelen olayları (yeni Ruh Hali Kartı, Oda Sayısı Güncelleme vb.) dinlemek için
-const subClient = new Redis(REDIS_URL); 
+// ---------------------------------------------------
+// 🔥 HTTP API UCU: PHP'DEN GELEN MESAJLARI YAKALAR
+// ---------------------------------------------------
 
-// PHP/Redis Üzerinden Gelen Olayları Dinle (Pub/Sub)
-subClient.subscribe('lythar_events', (err, count) => {
-    if (err) console.error("Redis Abonelik Hatası:", err);
-    console.log(`Redis'te ${count} kanala abone olundu.`);
-});
-
-subClient.on('message', (channel, message) => {
-    console.log(`Redis'ten gelen mesaj: ${message}`);
-    try {
-        const data = JSON.parse(message);
-        
-        // 🔑 Örnek Olay Yönetimi: PHP, yeni bir Ruh Hali Kartı yayınladığında
-        if (data.event === 'new_mood_stream') {
-            // Tüm bağlı istemcilere yeni kartı anında gönder
-            io.emit('mood_stream_update', {
-                type: 'new_card',
-                content: data.payload 
-            });
-        }
-        
-        // 🔑 Örnek Olay Yönetimi: Canlı Oda Katılımcı Sayısı Güncellemesi
-        if (data.event === 'room_count_update') {
-            // Sadece ilgili odayı dinleyenlere veya tüm Keşfet sayfasını dinleyenlere gönder
-            io.emit('room_count_update', data.payload);
-        }
-        
-    } catch (e) {
-        console.error("Mesaj parse hatası:", e);
-    }
-});
-
-
-// Socket.io Bağlantılarını Yönetme
-io.on('connection', (socket) => {
-    console.log('Yeni bir kullanıcı bağlandı:', socket.id);
+app.post('/api/publish', (req, res) => {
+    const { event, payload } = req.body; 
     
-    // Kullanıcı bir Odaya Katıldığında (Örn: JS'den gelen 'join_room' olayı)
-    socket.on('join_room', (roomId) => {
-        socket.join(roomId);
-        console.log(`${socket.id} odaya katıldı: ${roomId}`);
-        
-        // 💡 Burada Redis üzerinden o anki katılımcı sayısı güncellenebilir
-        // Redis'te room:X key'ini artır: pubClient.incr(`room:${roomId}:count`);
-    });
+    if (!event || !payload) {
+        return res.status(400).send({ error: "Eksik event veya payload verisi." });
+    }
 
-    socket.on('disconnect', () => {
-        console.log('Kullanıcı ayrıldı:', socket.id);
-        // 💡 Kullanıcının ayrıldığı odalardan katılımcı sayısını düşürmeyi unutma!
-    });
+    console.log(`[HTTP API] Alınan Olay: ${event}. Socket'e yayınlanıyor.`);
+
+    // Mesajı Socket.io ile anında yayınla
+    if (event === 'new_mood_stream' || event === 'room_count_update') {
+        // Tüm Keşfet sayfasını dinleyenlere yayıyoruz.
+        io.to('explore_feed').emit(event, payload);
+    }
+    
+    res.status(200).send({ status: 'success', recipients: io.engine.clientsCount });
 });
 
-// Sunucuyu Başlat
+// ---------------------------------------------------
+// 🌐 Socket.io Bağlantı Mantığı (Frontend Dinleyici)
+// ---------------------------------------------------
+
+io.on('connection', (socket) => {
+    console.log(`Kullanıcı Bağlandı: ${socket.id}`);
+    
+    // Kullanıcı Keşfet sayfasına girdiğinde bu event'i tetikler
+    socket.on('join_explore_feed', () => {
+        socket.join('explore_feed'); // Tüm Keşfet güncellemelerini alacak odaya ekle
+        console.log(`Socket ${socket.id} explore_feed'e katıldı.`);
+    });
+    
+    // ... diğer socket event'leri (join_live_room, disconnect, vb.) ...
+});
+
 server.listen(PORT, () => {
-    console.log(`Socket.io Sunucusu ${PORT} portunda çalışıyor.`);
+    console.log(`Lythar Canlı Akış Sunucusu ${PORT} portunda çalışıyor.`);
 });

@@ -1,64 +1,86 @@
 
-const http = require('http');
-const socketIo = require('socket.io');
-const express = require('express');
+// server.js - Lythar Gerçek Zamanlı Akış Sunucusu
 
-const PORT = process.env.PORT || 3000;
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
 const app = express();
+// HTTP sunucusunu express uygulaması üzerine kur
 const server = http.createServer(app);
 
-// Express, gelen JSON verilerini otomatik olarak parse etmeli
+// Gelen JSON verilerini işlemek için middleware
 app.use(express.json()); 
 
-// Socket.io Kurulumu
-const io = socketIo(server, {
+// 🚨 KİLİT AYAR: CORS Konfigürasyonu
+// PHP uygulamasının (https://lythar.tr) bu sunucuya bağlanmasına izin verir
+const io = new Server(server, {
     cors: {
-        // 🔑 CORS: PHP uygulamanın domainine izin ver
-        origin: [
-            process.env.PHP_APP_URL || 'http://localhost:8080', 
-            'https://lythar-ana-uygulama.onrender.com' // Gerçek Render URL'i
-        ], 
+        // 🔥 MUTLAKA BU ŞEKİLDE OLMALI: PHP uygulamanın adresi
+        origin: "https://lythar.tr", 
         methods: ["GET", "POST"]
     }
 });
 
-// ---------------------------------------------------
-// 🔥 HTTP API UCU: PHP'DEN GELEN MESAJLARI YAKALAR
-// ---------------------------------------------------
+// Port ayarı: Render tarafından atanan portu kullan (genellikle 10000) veya yerel test için 3000
+const PORT = process.env.PORT || 3000;
+
+
+// =========================================================================
+// 1. PHP'DEN GELEN HTTP POST ALICISI (Publisher)
+// =========================================================================
 
 app.post('/api/publish', (req, res) => {
-    const { event, payload } = req.body; 
-    
+    const { event, payload } = req.body;
+
     if (!event || !payload) {
-        return res.status(400).send({ error: "Eksik event veya payload verisi." });
+        return res.status(400).json({ error: 'Eksik etkinlik veya payload.' });
     }
 
-    console.log(`[HTTP API] Alınan Olay: ${event}. Socket'e yayınlanıyor.`);
+    // Konsola log düş: Yayınlamadan önce veriyi aldığını onayla
+    console.log(`[HTTP ALINDI] Olay: ${event}, Payload:`, payload);
 
-    // Mesajı Socket.io ile anında yayınla
-    if (event === 'new_mood_stream' || event === 'room_count_update') {
-        // Tüm Keşfet sayfasını dinleyenlere yayıyoruz.
-        io.to('explore_feed').emit(event, payload);
-    }
+    // Socket.io ile ilgili odaya yay (Broadcasting)
+    // Keşfet sayfaları 'explore_feed' odasına abone olmalıdır
+    io.to('explore_feed').emit(event, payload);
     
-    res.status(200).send({ status: 'success', recipients: io.engine.clientsCount });
+    // Konsola log düş: Yayınladığını onayla
+    console.log(`[YAYINLANDI] ${event} olayı 'explore_feed' odasına iletildi.`);
+
+    res.status(200).json({ status: 'ok', message: 'Olay başarıyla yayınlandı.' });
 });
 
-// ---------------------------------------------------
-// 🌐 Socket.io Bağlantı Mantığı (Frontend Dinleyici)
-// ---------------------------------------------------
+
+// =========================================================================
+// 2. SOCKET.IO BAĞLANTI YÖNETİMİ
+// =========================================================================
 
 io.on('connection', (socket) => {
-    console.log(`Kullanıcı Bağlandı: ${socket.id}`);
-    
-    // Kullanıcı Keşfet sayfasına girdiğinde bu event'i tetikler
+    console.log(`Yeni Socket Bağlantısı: ${socket.id}`);
+
+    // İstemci 'explore_feed' odasına katılmak istediğinde
     socket.on('join_explore_feed', () => {
-        socket.join('explore_feed'); // Tüm Keşfet güncellemelerini alacak odaya ekle
-        console.log(`Socket ${socket.id} explore_feed'e katıldı.`);
+        socket.join('explore_feed');
+        console.log(`${socket.id} 'explore_feed' odasına katıldı.`);
     });
     
-    // ... diğer socket event'leri (join_live_room, disconnect, vb.) ...
+    // Örnek: Canlı Odaya Katılma (İleride kullanılacak)
+    // socket.on('join_live_room', (roomId) => {
+    //     socket.join(`room_${roomId}`);
+    //     console.log(`${socket.id} odaya katıldı: ${roomId}`);
+    //     // Katılımcı sayısını güncelle
+    //     // io.to('explore_feed').emit('room_count_update', { room_id: roomId, count: getRoomCount(roomId) });
+    // });
+
+    socket.on('disconnect', () => {
+        console.log(`Socket Bağlantısı Kesildi: ${socket.id}`);
+    });
 });
+
+
+// =========================================================================
+// 3. SUNUCUYU BAŞLATMA
+// =========================================================================
 
 server.listen(PORT, () => {
     console.log(`Lythar Canlı Akış Sunucusu ${PORT} portunda çalışıyor.`);
